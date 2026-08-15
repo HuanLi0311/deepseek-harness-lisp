@@ -205,12 +205,18 @@ plugin descriptor plist containing :NAME, :INJECT, and :APPLY."
                (gethash name (dsh-runtime-services runtime)))
              names))
 
-(defun activation-receipt (plugin run)
+(defun activation-receipt (runtime plugin run)
   (list :ok t
         :status (dsh-run-record-status run)
         :plugin-id (dsh-plugin-record-id plugin)
         :package-id (dsh-run-record-package-id run)
         :plugin-run-id (dsh-run-record-id run)
+        :waiting-for
+        (if (eq (dsh-run-record-status run) :waiting)
+            (missing-services runtime
+                              (descriptor-injections
+                               (dsh-run-record-descriptor run)))
+            nil)
         :current-package-id (dsh-plugin-record-current-package-id plugin)
         :next-package-id (dsh-plugin-record-next-package-id plugin)))
 
@@ -271,7 +277,9 @@ listeners, services, or handlers installed."
         :message (dsh-run-record-error run)
         :plugin-id (dsh-plugin-record-id plugin)
         :package-id (dsh-run-record-package-id run)
-        :plugin-run-id (dsh-run-record-id run)))
+        :plugin-run-id (dsh-run-record-id run)
+        :current-package-id (dsh-plugin-record-current-package-id plugin)
+        :next-package-id (dsh-plugin-record-next-package-id plugin)))
 
 (defun start-run-record (runtime plugin package run)
   (handler-case
@@ -283,7 +291,7 @@ listeners, services, or handlers installed."
         (if missing
             (progn
               (setf (dsh-run-record-status run) :waiting)
-              (activation-receipt plugin run))
+              (activation-receipt runtime plugin run))
             (let ((context
                     (%make-context
                      :runtime runtime
@@ -296,7 +304,7 @@ listeners, services, or handlers installed."
                     (dsh-plugin-record-current-package-id plugin)
                     (dsh-run-record-package-id run)
                     (dsh-plugin-record-next-package-id plugin) nil)
-              (activation-receipt plugin run))))
+              (activation-receipt runtime plugin run))))
     (error (condition)
       (fail-run runtime plugin run condition))))
 
@@ -384,11 +392,15 @@ The old Run is not silently restarted, matching DSH's explicit recovery rule."
   "Stop a Plugin and dispose its current Run while retaining all versions." 
   (let* ((plugin (require-owned-plugin runtime session-id plugin-id))
          (run (dsh-plugin-record-active-run plugin)))
-    (when run
-      (dispose-run runtime run)
-      (setf (dsh-run-record-status run) :stopped
-            (dsh-plugin-record-active-run plugin) nil
-            (dsh-plugin-record-latest-run plugin) run))
+    (unless run
+      (return-from stop-plugin
+        (list :ok nil
+              :reason :not-running
+              :message (format nil "plugin ~S is not running" plugin-id))))
+    (dispose-run runtime run)
+    (setf (dsh-run-record-status run) :stopped
+          (dsh-plugin-record-active-run plugin) nil
+          (dsh-plugin-record-latest-run plugin) run)
     (list :ok t
           :plugin-id plugin-id
           :status :stopped
@@ -406,10 +418,11 @@ The old Run is not silently restarted, matching DSH's explicit recovery rule."
 
 (defun undefine-plugin (runtime session-id plugin-id)
   "Stop and permanently remove a Plugin and every immutable Package." 
-  (let ((plugin (require-owned-plugin runtime session-id plugin-id)))
-    (when (dsh-plugin-record-active-run plugin)
+  (let* ((plugin (require-owned-plugin runtime session-id plugin-id))
+         (was-running (not (null (dsh-plugin-record-active-run plugin)))))
+    (when was-running
       (stop-plugin runtime session-id plugin-id))
     (remhash plugin-id (dsh-runtime-plugins runtime))
     (setf (dsh-runtime-plugin-order runtime)
           (delete plugin-id (dsh-runtime-plugin-order runtime) :test #'equal))
-    (list :ok t :plugin-id plugin-id)))
+    (list :ok t :plugin-id plugin-id :was-running was-running)))

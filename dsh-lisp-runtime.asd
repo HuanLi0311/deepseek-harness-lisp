@@ -10,4 +10,5 @@
                (:file "src/runtime")
                (:file "src/context")
                (:file "src/reflection")
-               (:file "src/tools")))
+               (:file "src/tools")
+               (:file "src/jsonrpc")))

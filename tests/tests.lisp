@@ -139,6 +139,9 @@
                     (list :plugin-id plugin-id :package-id package-id))
                    :ok)
              "the native run Tool activates a Package")
+      (check (getf (agent-call-tool agent "dsh/rollback" (list :plugin-id plugin-id))
+                  :ok)
+             "the native rollback Tool reactivates the successful Package")
       (check (getf (agent-call-tool agent "dsh/stop" (list :plugin-id plugin-id))
                    :ok)
              "the native stop Tool disposes a Package")
@@ -178,11 +181,52 @@
      "stopping disposes the Client half")
     t))
 
+(defun test-jsonrpc-lifecycle-bridge ()
+  (let* ((server (make-jsonrpc-server))
+         (defined
+           (dsh-jsonrpc-dispatch
+            server
+            '(:jsonrpc "2.0" :id 1 :method "cordis/define"
+              :params (:session-id "session-rpc" :id-prefix "rpc"
+                       :name "waiting" :purpose "bridge lifecycle"
+                       :form "(list :name \"waiting\" :inject '(\"clock\") :apply (lambda (ctx) (declare (ignore ctx))))"))))
+         (definition (getf defined :result))
+         (plugin-id (getf definition :plugin-id))
+         (package-id (getf definition :package-id))
+         (waiting
+           (dsh-jsonrpc-dispatch
+            server
+            (list :jsonrpc "2.0" :id 2 :method "cordis/run"
+                  :params (list :session-id "session-rpc" :plugin-id plugin-id
+                                :package-id package-id :mode "run"))))
+         (stale-stop
+           (dsh-jsonrpc-dispatch
+            server
+            '(:jsonrpc "2.0" :id 3 :method "cordis/stop"
+              :params (:session-id "session-rpc" :plugin-id "missing"))))
+         (removed
+           (dsh-jsonrpc-dispatch
+            server
+            (list :jsonrpc "2.0" :id 4 :method "cordis/undefine"
+                  :params (list :session-id "session-rpc" :plugin-id plugin-id)))))
+    (check (getf definition :ok) "the bridge defines a Package")
+    (check-equal :waiting (getf (getf waiting :result) :status)
+                 "the bridge preserves a waiting activation")
+    (check-equal '("clock") (getf (getf waiting :result) :waiting-for)
+                 "the bridge exposes missing services")
+    (check-equal 3 (getf stale-stop :id)
+                 "the bridge retains the JSON-RPC request id on errors")
+    (check (getf stale-stop :error) "the bridge reports an RPC error")
+    (check (getf (getf removed :result) :was-running)
+           "undefine reports its stopped active Run")
+    t))
+
 (defun run-tests ()
   (dolist (test '(test-waiting-lifecycle-and-disposal
                   test-failed-update-and-rollback
                   test-native-self-tools
-                  test-client-half-lifecycle))
+                  test-client-half-lifecycle
+                  test-jsonrpc-lifecycle-bridge))
     (format t "[TEST] ~A~%" test)
     (funcall test))
   (format t "All dsh-lisp-runtime tests passed.~%")

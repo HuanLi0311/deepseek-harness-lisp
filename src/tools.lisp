@@ -131,6 +131,13 @@ Package-owned Tools are deliberately left alone; their Run disposer owns them."
        (declare (ignore caller))
        (stop-plugin runtime session-id (getf arguments :plugin-id))))
     (register-builtin-tool
+     agent "dsh/rollback"
+     "Re-activate the last successful Package version of a Plugin."
+     '(:plugin-id)
+     (lambda (arguments caller)
+       (declare (ignore caller))
+       (rollback-plugin runtime session-id (getf arguments :plugin-id))))
+    (register-builtin-tool
      agent "dsh/undefine"
      "Permanently remove a Plugin and all its Package versions."
      '(:plugin-id)

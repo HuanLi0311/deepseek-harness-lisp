@@ -63,4 +63,8 @@
    #:register-builtin-tool
    #:remove-builtin-tool
    #:agent-call-tool
-   #:agent-inspect))
+   #:agent-inspect
+
+   ;; Stdio bridge.
+   #:make-jsonrpc-server
+   #:serve-jsonrpc))
